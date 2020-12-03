@@ -30,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/scheme"
@@ -108,12 +109,14 @@ var _ = Describe("webhook", func() {
 			svr.WebhookMux.ServeHTTP(w, req)
 			Expect(w.Code).To(Equal(http.StatusOK))
 			By("sanity checking the response contains reasonable fields")
-			Expect(w.Body).To(ContainSubstring(`"allowed":true`))
-			Expect(w.Body).To(ContainSubstring(`"patch":`))
-			Expect(w.Body).To(ContainSubstring(`"code":200`))
+			Expect(w.Body.String()).To(ContainSubstring(`"allowed":true`))
+			Expect(w.Body.String()).To(ContainSubstring(`"patch":`))
+			Expect(w.Body.String()).To(ContainSubstring(`"code":200`))
 
 			By("sending a request to a validating webhook path that doesn't exist")
 			path = generateValidatePath(testDefaulterGVK)
+			_, err = reader.Seek(0, 0)
+			Expect(err).NotTo(HaveOccurred())
 			req = httptest.NewRequest("POST", "http://svc-name.svc-ns.svc"+path, reader)
 			req.Header.Add(http.CanonicalHeaderKey("Content-Type"), "application/json")
 			w = httptest.NewRecorder()
@@ -184,14 +187,16 @@ var _ = Describe("webhook", func() {
 
 			By("sending a request to a validating webhook path")
 			path = generateValidatePath(testValidatorGVK)
+			_, err = reader.Seek(0, 0)
+			Expect(err).NotTo(HaveOccurred())
 			req = httptest.NewRequest("POST", "http://svc-name.svc-ns.svc"+path, reader)
 			req.Header.Add(http.CanonicalHeaderKey("Content-Type"), "application/json")
 			w = httptest.NewRecorder()
 			svr.WebhookMux.ServeHTTP(w, req)
 			Expect(w.Code).To(Equal(http.StatusOK))
 			By("sanity checking the response contains reasonable field")
-			Expect(w.Body).To(ContainSubstring(`"allowed":false`))
-			Expect(w.Body).To(ContainSubstring(`"code":403`))
+			Expect(w.Body.String()).To(ContainSubstring(`"allowed":false`))
+			Expect(w.Body.String()).To(ContainSubstring(`"code":403`))
 		})
 
 		It("should scaffold defaulting and validating webhooks if the type implements both Defaulter and Validator interfaces", func() {
@@ -253,20 +258,22 @@ var _ = Describe("webhook", func() {
 			svr.WebhookMux.ServeHTTP(w, req)
 			Expect(w.Code).To(Equal(http.StatusOK))
 			By("sanity checking the response contains reasonable field")
-			Expect(w.Body).To(ContainSubstring(`"allowed":true`))
-			Expect(w.Body).To(ContainSubstring(`"patch":`))
-			Expect(w.Body).To(ContainSubstring(`"code":200`))
+			Expect(w.Body.String()).To(ContainSubstring(`"allowed":true`))
+			Expect(w.Body.String()).To(ContainSubstring(`"patch":`))
+			Expect(w.Body.String()).To(ContainSubstring(`"code":200`))
 
 			By("sending a request to a validating webhook path")
 			path = generateValidatePath(testDefaultValidatorGVK)
+			_, err = reader.Seek(0, 0)
+			Expect(err).NotTo(HaveOccurred())
 			req = httptest.NewRequest("POST", "http://svc-name.svc-ns.svc"+path, reader)
 			req.Header.Add(http.CanonicalHeaderKey("Content-Type"), "application/json")
 			w = httptest.NewRecorder()
 			svr.WebhookMux.ServeHTTP(w, req)
 			Expect(w.Code).To(Equal(http.StatusOK))
 			By("sanity checking the response contains reasonable field")
-			Expect(w.Body).To(ContainSubstring(`"allowed":true`))
-			Expect(w.Body).To(ContainSubstring(`"code":200`))
+			Expect(w.Body.String()).To(ContainSubstring(`"allowed":true`))
+			Expect(w.Body.String()).To(ContainSubstring(`"code":200`))
 		})
 
 		It("should scaffold a validating webhook if the type implements the Validator interface to validate deletes", func() {
@@ -329,8 +336,8 @@ var _ = Describe("webhook", func() {
 			svr.WebhookMux.ServeHTTP(w, req)
 			Expect(w.Code).To(Equal(http.StatusOK))
 			By("sanity checking the response contains reasonable field")
-			Expect(w.Body).To(ContainSubstring(`"allowed":false`))
-			Expect(w.Body).To(ContainSubstring(`"code":403`))
+			Expect(w.Body.String()).To(ContainSubstring(`"allowed":false`))
+			Expect(w.Body.String()).To(ContainSubstring(`"code":403`))
 
 			reader = strings.NewReader(`{
   "kind":"AdmissionReview",
@@ -363,8 +370,8 @@ var _ = Describe("webhook", func() {
 			svr.WebhookMux.ServeHTTP(w, req)
 			Expect(w.Code).To(Equal(http.StatusOK))
 			By("sanity checking the response contains reasonable field")
-			Expect(w.Body).To(ContainSubstring(`"allowed":true`))
-			Expect(w.Body).To(ContainSubstring(`"code":200`))
+			Expect(w.Body.String()).To(ContainSubstring(`"allowed":true`))
+			Expect(w.Body.String()).To(ContainSubstring(`"code":200`))
 
 		})
 	})

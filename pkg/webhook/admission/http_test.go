@@ -27,10 +27,10 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	"sigs.k8s.io/controller-runtime/pkg/runtime/inject"
+	admissionv1 "k8s.io/api/admission/v1"
 
-	admissionv1beta1 "k8s.io/api/admission/v1beta1"
 	logf "sigs.k8s.io/controller-runtime/pkg/internal/log"
+	"sigs.k8s.io/controller-runtime/pkg/runtime/inject"
 )
 
 var _ = Describe("Admission Webhooks", func() {
@@ -54,7 +54,7 @@ var _ = Describe("Admission Webhooks", func() {
 			expected := []byte(`{"response":{"uid":"","allowed":false,"status":{"metadata":{},"message":"request body is empty","code":400}}}
 `)
 			webhook.ServeHTTP(respRecorder, req)
-			Expect(respRecorder.Body.Bytes()).To(Equal(expected))
+			Expect(respRecorder.Body.String()).To(Equal(string(expected)))
 		})
 
 		It("should return bad-request when given the wrong content-type", func() {
@@ -66,7 +66,7 @@ var _ = Describe("Admission Webhooks", func() {
 			expected := []byte(`{"response":{"uid":"","allowed":false,"status":{"metadata":{},"message":"contentType=application/foo, expected application/json","code":400}}}
 `)
 			webhook.ServeHTTP(respRecorder, req)
-			Expect(respRecorder.Body.Bytes()).To(Equal(expected))
+			Expect(respRecorder.Body.String()).To(Equal(string(expected)))
 		})
 
 		It("should return bad-request when given an undecodable body", func() {
@@ -79,7 +79,7 @@ var _ = Describe("Admission Webhooks", func() {
 				`{"response":{"uid":"","allowed":false,"status":{"metadata":{},"message":"couldn't get version/kind; json parse error: unexpected end of JSON input","code":400}}}
 `)
 			webhook.ServeHTTP(respRecorder, req)
-			Expect(respRecorder.Body.Bytes()).To(Equal(expected))
+			Expect(respRecorder.Body.String()).To(Equal(string(expected)))
 		})
 
 		It("should return the response given by the handler", func() {
@@ -95,7 +95,7 @@ var _ = Describe("Admission Webhooks", func() {
 			expected := []byte(`{"response":{"uid":"","allowed":true,"status":{"metadata":{},"code":200}}}
 `)
 			webhook.ServeHTTP(respRecorder, req)
-			Expect(respRecorder.Body.Bytes()).To(Equal(expected))
+			Expect(respRecorder.Body.String()).To(Equal(string(expected)))
 		})
 
 		It("should present the Context from the HTTP request, if any", func() {
@@ -122,7 +122,7 @@ var _ = Describe("Admission Webhooks", func() {
 			ctx, cancel := context.WithCancel(context.WithValue(context.Background(), key, value))
 			cancel()
 			webhook.ServeHTTP(respRecorder, req.WithContext(ctx))
-			Expect(respRecorder.Body.Bytes()).To(Equal(expected))
+			Expect(respRecorder.Body.String()).To(Equal(string(expected)))
 		})
 	})
 })
@@ -155,7 +155,7 @@ func (h *fakeHandler) Handle(ctx context.Context, req Request) Response {
 	if h.fn != nil {
 		return h.fn(ctx, req)
 	}
-	return Response{AdmissionResponse: admissionv1beta1.AdmissionResponse{
+	return Response{AdmissionResponse: admissionv1.AdmissionResponse{
 		Allowed: true,
 	}}
 }

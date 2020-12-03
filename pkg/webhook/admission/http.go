@@ -24,8 +24,9 @@ import (
 	"io/ioutil"
 	"net/http"
 
+	v1 "k8s.io/api/admission/v1"
 	"k8s.io/api/admission/v1beta1"
-	admissionv1beta1 "k8s.io/api/admission/v1beta1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -35,7 +36,8 @@ var admissionScheme = runtime.NewScheme()
 var admissionCodecs = serializer.NewCodecFactory(admissionScheme)
 
 func init() {
-	utilruntime.Must(admissionv1beta1.AddToScheme(admissionScheme))
+	utilruntime.Must(v1.AddToScheme(admissionScheme))
+	utilruntime.Must(v1beta1.AddToScheme(admissionScheme))
 }
 
 var _ http.Handler = &Webhook{}
@@ -44,19 +46,21 @@ func (wh *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var body []byte
 	var err error
 
-	var reviewResponse Response
+	// Wrap bad request logging/writing.
+	writeBadRequest := func(err error, msg string, logFields ...interface{}) {
+		wh.log.Error(err, msg, logFields...)
+		wh.writeResponse(w, Errored(http.StatusBadRequest, err))
+		return
+	}
+
 	if r.Body != nil {
 		if body, err = ioutil.ReadAll(r.Body); err != nil {
-			wh.log.Error(err, "unable to read the body from the incoming request")
-			reviewResponse = Errored(http.StatusBadRequest, err)
-			wh.writeResponse(w, reviewResponse)
+			writeBadRequest(err, "unable to read the body from the incoming request")
 			return
 		}
 	} else {
 		err = errors.New("request body is empty")
-		wh.log.Error(err, "bad request")
-		reviewResponse = Errored(http.StatusBadRequest, err)
-		wh.writeResponse(w, reviewResponse)
+		writeBadRequest(err, "bad request")
 		return
 	}
 
@@ -64,33 +68,47 @@ func (wh *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	contentType := r.Header.Get("Content-Type")
 	if contentType != "application/json" {
 		err = fmt.Errorf("contentType=%s, expected application/json", contentType)
-		wh.log.Error(err, "unable to process a request with an unknown content type", "content type", contentType)
-		reviewResponse = Errored(http.StatusBadRequest, err)
-		wh.writeResponse(w, reviewResponse)
+		writeBadRequest(err, "unable to process a request with an unknown content type", "content type", contentType)
 		return
 	}
 
-	req := Request{}
-	ar := v1beta1.AdmissionReview{
-		// avoid an extra copy
-		Request: &req.AdmissionRequest,
+	// Both v1 and v1beta1 AdmissionReview types are the exact same, so the v1beta1 type can
+	// be decoded into the v1 type. However the runtime codec's decoder guesses which type to
+	// decode into by GVK if an Object's TypeMeta isn't set. By checking TypeMeta for v1beta1
+	// and setting API version to v1, the decoder will coerce a v1beta1 AdmissionReview to v1.
+	ar := unversionedAdmissionReview{
+		Request:  &v1.AdmissionRequest{},
+		Response: &v1.AdmissionResponse{},
 	}
-	if _, _, err := admissionCodecs.UniversalDeserializer().Decode(body, nil, &ar); err != nil {
-		wh.log.Error(err, "unable to decode the request")
-		reviewResponse = Errored(http.StatusBadRequest, err)
-		wh.writeResponse(w, reviewResponse)
+	if err := json.Unmarshal(body, &ar.TypeMeta); err != nil {
+		writeBadRequest(err, "unable to decode the request typemeta")
 		return
 	}
+	switch ar.GroupVersionKind() {
+	case v1.SchemeGroupVersion.WithKind("AdmissionReview"):
+	case v1beta1.SchemeGroupVersion.WithKind("AdmissionReview"):
+		ar.SetGroupVersionKind(v1.SchemeGroupVersion.WithKind("AdmissionReview"))
+	default:
+		writeBadRequest(errors.New("admission review has bad typemeta"), ar.GroupVersionKind().String())
+		return
+	}
+
+	if _, _, err := admissionCodecs.UniversalDeserializer().Decode(body, nil, &ar); err != nil {
+		writeBadRequest(err, "unable to decode the request")
+		return
+	}
+	req := Request{}
+	req.AdmissionRequest = *ar.Request
 	wh.log.V(1).Info("received request", "UID", req.UID, "kind", req.Kind, "resource", req.Resource)
 
 	// TODO: add panic-recovery for Handle
-	reviewResponse = wh.Handle(r.Context(), req)
+	reviewResponse := wh.Handle(r.Context(), req)
 	wh.writeResponse(w, reviewResponse)
 }
 
 func (wh *Webhook) writeResponse(w io.Writer, response Response) {
 	encoder := json.NewEncoder(w)
-	responseAdmissionReview := v1beta1.AdmissionReview{
+	responseAdmissionReview := v1.AdmissionReview{
 		Response: &response.AdmissionResponse,
 	}
 	err := encoder.Encode(responseAdmissionReview)
@@ -105,5 +123,28 @@ func (wh *Webhook) writeResponse(w io.Writer, response Response) {
 			}
 			log.V(1).Info("wrote response", "UID", res.UID, "allowed", res.Allowed)
 		}
+	}
+}
+
+// unversionedAdmissionReview is used to decode both v1 and v1beta1 AdmissionReview types.
+type unversionedAdmissionReview struct {
+	metav1.TypeMeta `json:",inline"`
+	Request         *v1.AdmissionRequest  `json:"request,omitempty"`
+	Response        *v1.AdmissionResponse `json:"response,omitempty"`
+}
+
+var _ runtime.Object = &unversionedAdmissionReview{}
+
+func (o unversionedAdmissionReview) DeepCopyObject() runtime.Object {
+	ar := v1.AdmissionReview{
+		TypeMeta: o.TypeMeta,
+		Request:  o.Request,
+		Response: o.Response,
+	}
+	aro := ar.DeepCopyObject().(*v1.AdmissionReview)
+	return &unversionedAdmissionReview{
+		TypeMeta: aro.TypeMeta,
+		Request:  aro.Request,
+		Response: aro.Response,
 	}
 }
